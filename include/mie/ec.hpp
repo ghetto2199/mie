@@ -439,6 +439,9 @@ public:
 			} else {
 				self.y.fromStr(&str[pos + 1], 16);
 			}
+			if (!EcT::isValid(self.x, self.y)) {
+				throw cybozu::Exception("EcT:operator>>:bad x, y") << self.x << self.y;
+			}
 		}
 		return is;
 	}
@@ -498,6 +501,9 @@ public:
 		} else {
 			bv.extract(t, bitLen, bitLen);
 			y.fromBitVec(t);
+		}
+		if (!isValid(x, y)) {
+			throw cybozu::Exception("fromBitVec:bad x, y") << x << y;
 		}
 		z = 1;
 #endif
@@ -567,6 +573,7 @@ struct EcParam {
 
 } // mie
 
+#ifndef MIE_DONT_DEFINE_HASH
 namespace std { CYBOZU_NAMESPACE_TR1_BEGIN
 template<class T> struct hash;
 
@@ -583,3 +590,4 @@ struct hash<mie::EcT<_Fp> > {
 };
 
 CYBOZU_NAMESPACE_TR1_END } // std
+#endif

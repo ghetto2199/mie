@@ -1,102 +1,188 @@
 import sys, re
 
-def gen_mulNx1(fo, unitN, n):
-	inN = unitN * n
-	outN = unitN * (n + 1)
-	if n > 4:
-		attr = "noinline"
-	else:
-		attr = ""
-	print>>fo, "define private i%d @mul%dx%d(i%d %%x, i%d %%y) %s {" % (outN, inN, unitN, inN, unitN, attr)
-	for i in xrange(0, n):
-		print>>fo, "  %%x%d = call i%d @extract%d(i%d %%x, i%d %d)" % (i, unitN, inN, inN, inN, i * unitN)
-		print>>fo, "  %%x%dy = call i%d @mul%dx%d(i%d %%x%d, i%d %%y)" % (i, unitN * 2, unitN, unitN, unitN, i, unitN)
-		print>>fo, "  %%x%dy0 = zext i%d %%x%dy to i%d" % (i, unitN * 2, i, outN)
-	for i in xrange(1, n):
-		print>>fo, "  %%x%dy1 = shl i%d %%x%dy0, %d" % (i, outN, i, i * unitN)
+# @for <var>, <begin>, <end>
+RE_FOR = re.compile(r'@for\s+(\w+)\s*,\s*([^ ]+)\s*,\s*([^ ]+)')
+# $(<exp>)
+RE_VAL = re.compile(r'\$\(([^)]+)\)')
+# @define <var>=<exp>
+RE_DEFINE = re.compile(r'@define\s+(\w+)\s*=(.*)')
+# @if <exp>
+RE_IF = re.compile(r'@if\s+(.*)')
+# @elif <exp>
+RE_ELIF = re.compile(r'@elif\s+(.*)')
 
-	print>>fo, "  %%t0 = add i%d %%x0y0, %%x1y1" % outN
-	for i in xrange(1, n - 1):
-		print>>fo, "  %%t%d = add i%d %%t%d, %%x%dy1" % (i, outN, i - 1, i + 1)
-	print>>fo, "  ret i%d %%t%d" % (outN, n - 2)
-	print>>fo, "}"
+def evalStr(s, envG, envL={}):
+	def eval2str(x):
+		s = x.group(1)
+		v = eval(s, envG, envL)
+		return str(v)
+	s = RE_VAL.sub(eval2str, s)
+	return s
 
-def gen_mulNxN(fo, unitN, n):
-	inN = unitN * n
-	bitNpU = inN + unitN
-	outN = inN * 2
-	print>>fo, "define void @mie_fp_mul%dpre(i%d* %%pz, i%d* %%px, i%d* %%py) {" % (inN, unitN, inN, inN)
-	print>>fo, "  %%x = load i%d* %%px" % inN
-	print>>fo, "  %%y = load i%d* %%py" % inN
-	for i in xrange(0, n):
-		print>>fo, "  %%y%d = call i%d @extract%d(i%d %%y, i%d %d)" % (i, unitN, inN, inN, inN, i * unitN)
+def parseDefine(s, envG, envL):
+	"""
+	if s is @define statement, then update envL and return True
+	otherwise return False
+	"""
+	p = RE_DEFINE.match(s)
+	if not p:
+		return False
+	lhs = p.group(1).strip()
+	rhs = p.group(2).strip()
+	envL[lhs] = eval(rhs, envG, envL)
+	return True
 
-	print>>fo, "  %%sum0 = call i%d @mul%dx%d(i%d %%x, i%d %%y0)" % (bitNpU, inN, unitN, inN, unitN)
-	print>>fo, "  %%t0 = trunc i%d %%sum0 to i%d" % (bitNpU, unitN)
-	print>>fo, "  store i%d %%t0, i%d* %%pz" % (unitN, unitN)
+def parseFor(s, envG):
+	"""
+	@for i, 0, 3
+	<exp>
+	@endif
 
-	for i in xrange(1, n):
-		print>>fo
-		print>>fo, "  %%s%d = lshr i%d %%sum%d, %d" % (i - 1, bitNpU, i - 1, unitN)
-		print>>fo, "  %%xy%d = call i%d @mul%dx%d(i%d %%x, i%d %%y%d)" % (i, bitNpU, inN, unitN, inN, unitN, i)
-		print>>fo, "  %%sum%d = add i%d %%s%d, %%xy%d" % (i, bitNpU, i - 1, i)
-		print>>fo, "  %%z%d = getelementptr i%d* %%pz, i32 %d" % (i, unitN, i)
-		if i == n - 1:
-			break
-		print>>fo, "  %%ts%d = trunc i%d %%sum%d to i%d" % (i, bitNpU, i, unitN)
-		print>>fo, "  store i%d %%ts%d, i%d* %%z%d" % (unitN, i, unitN, i)
+	|
+	v
+	@define i = 0
+	<exp>
+	exp
+	@define i = 1
+	<exp>
+	@define i = 2
+	<exp>
 
-	print>>fo, "  %%p = bitcast i%d* %%z%d to i%d*" % (unitN, n - 1, bitNpU)
-	print>>fo, "  store i%d %%sum%d, i%d* %%p" % (bitNpU, n - 1, bitNpU)
-	print>>fo, "  ret void"
-	print>>fo, "}"
+	"""
+	out = ""
+	inFor = False
+	envL = {}
+	for line in s.split('\n'):
+		stripped = line.strip()
+		# save @define for parseIf
+		parseDefine(stripped, envG, envL)
+		if inFor:
+			if line.strip() == '@endfor':
+				inFor = False
+				for i in xrange(b, e):
+					out += "@define %s = %d\n" % (v, i)
+					out += sub
+			else:
+				sub += line + '\n'
+		else:
+			p = RE_FOR.search(stripped)
+			if p:
+				v = p.group(1).strip()
+				b = eval(p.group(2), envG)
+				e = eval(p.group(3), envG)
+				sub = ""
+				inFor = True
+				envL[v] = b
+			else:
+				out += line + '\n'
+	return out
 
-def gen_mul(fo, unitN):
-	bitN = 576
-	n = (bitN + unitN - 1) / unitN
-	for i in xrange(2, n + 1):
-		gen_mulNx1(fo, unitN, i)
-		gen_mulNxN(fo, unitN, i)
+def parseIf(s, envG):
+	out = ""
+	IF_INIT = 0
+	IF_IF = 1
+	IF_ELSE = 2
+	ifState = IF_INIT
+	ifVar = False
+	# available variables in @(<expr>)
+	envL = {}
+	def evalIntLoc(s):
+		return eval(s, envG, envL)
+	for line in s.split('\n'):
+		stripped = line.strip()
+		# remove @define
+		if parseDefine(stripped, envG, envL):
+			continue
+		if ifState == IF_INIT:
+			p = RE_IF.match(stripped)
+			if p:
+				ifState = IF_IF
+				ifVar = evalIntLoc(p.group(1))
+				continue
+		elif ifState == IF_IF:
+			if stripped == '@endif':
+				ifState = IF_INIT
+				continue
+			elif stripped == '@else':
+				ifState = IF_ELSE
+				ifVar = not ifVar
+				continue
+			p = RE_ELIF.match(stripped)
+			if p:
+				ifVar = evalIntLoc(p.group(1))
+				continue
+			if not ifVar:
+				continue
+		elif ifState == IF_ELSE:
+			if stripped == '@endif':
+				ifState = IF_INIT
+				continue
+			if not ifVar:
+				continue
+		else:
+			raise Exception('bad state', ifState)
+		out += evalStr(line, envG, envL) + '\n'
+	return out
 
+def parse(s, unitL, bitL):
+	"""
+		eval "@(<expr>)" to integer
 
-def gen_sub(fo, s, unitN, bitN):
-	bitNpU = bitN + unitN
-	s = s.replace('@bitNpUm1', str(bitNpU - 1))
-	s = s.replace('@bitNpU', str(bitNpU))
-	s = s.replace('@bitNm1', str(bitN - 1))
-	s = s.replace('@bitN', str(bitN))
-	s = s.replace('@unitN2', str(unitN * 2))
-	s = s.replace('@unitN', str(unitN))
-	fo.write(s)
+		@for <var>, <begin>, <end>
+		...
+		@endfor
 
-def gen(fo, inName, unitN, bitNL):
-	fi = open(inName, 'r')
+		REMARK : @for is not nestable
+
+		@define <var> = <exp>
+		REMARK : var is global
+
+		@if <exp>
+		@elif <exp>
+		@endif
+
+		REMARK : @if is not nestable
+	"""
+	# available variables in @(<expr>)
+	envG = {
+		'unit' : unitL,
+		'bit' : bitL,
+		'N' : bitL / unitL,
+	}
+	s = parseFor(s, envG)
+	s = parseIf(s, envG)
+	return s
+
+def gen(fo, inLame, unitL, bitLL):
+	fi = open(inLame, 'r')
 	s = fi.read()
 	fi.close()
-	for bitN in bitNL:
-		gen_sub(fo, s, unitN, bitN)
+	for bitL in bitLL:
+		t = parse(s, unitL, bitL)
+		fo.write(t)
 
 def main():
 	argv = sys.argv
 	args = len(argv)
-	unitN = 64
+	unitL = 64
 	if args == 2:
-		unitN = int(argv[1])
-	if unitN not in [32, 64]:
-		print "bad unitN", unitN
+		unitL = int(argv[1])
+	if unitL not in [32, 64]:
+		print "bad unitL", unitL
 		exit(1)
 
-	outName = 'base%d.ll' % unitN
-	fo = open(outName, 'w')
-	gen(fo, 'once.txt', unitN, [unitN * 2])
+	outLame = 'base%d.ll' % unitL
+	fo = open(outLame, 'w')
+#	gen(fo, 't.txt', unitL, [unitL * 4])
+#	exit(1)
+	gen(fo, 'once.txt', unitL, [unitL * 2])
 
-	bitNL = range(unitN, 576 + 1, unitN)
-	gen(fo, 'all.txt', unitN, bitNL)
-	gen(fo, 'short.txt', unitN, bitNL)
-	gen(fo, 'long.txt', unitN, bitNL)
-	gen_mul(fo, unitN)
+	bitLL = range(unitL, 576 + 1, unitL)
+	gen(fo, 'all.txt', unitL, bitLL)
+	gen(fo, 'short.txt', unitL, bitLL)
+	gen(fo, 'long.txt', unitL, bitLL)
+	gen(fo, 'mul.txt', unitL, bitLL[1:])
 	fo.close()
 
 if __name__ == "__main__":
     main()
-

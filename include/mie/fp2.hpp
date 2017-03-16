@@ -15,9 +15,6 @@
 		#define NOMINMAX
 	#endif
 #endif
-#if defined(_WIN64) || defined(__x86_64__)
-//	#define USE_MONT_FP
-#endif
 #include <cybozu/hash.hpp>
 #include <cybozu/itoa.hpp>
 #include <cybozu/atoi.hpp>
@@ -27,31 +24,22 @@
 #include <mie/gmp_util.hpp>
 #include <mie/power.hpp>
 
-#ifndef MIE_FP_BLOCK_MAX_BIT_N
-	#define MIE_FP_BLOCK_MAX_BIT_N 521
-#endif
-
 namespace mie {
 
 struct Block {
 	typedef fp::Unit Unit;
 	const Unit *p; // pointer to original FpT.v_
 	size_t n;
-	static const size_t UnitByteN = sizeof(Unit);
-	static const size_t maxUnitN = (MIE_FP_BLOCK_MAX_BIT_N + UnitByteN * 8 - 1) / (UnitByteN * 8);
-	Unit v_[maxUnitN];
+	Unit v_[fp::maxUnitN];
 };
 
 template<class tag = fp::TagDefault, size_t maxBitN = MIE_FP_BLOCK_MAX_BIT_N>
 class FpT {
 	typedef fp::Unit Unit;
-	static const size_t UnitByteN = sizeof(Unit);
-	static const size_t maxUnitN = (maxBitN + UnitByteN * 8 - 1) / (UnitByteN * 8);
 	static fp::Op op_;
 	static mie::SquareRoot sq_;
-	static size_t pBitLen_;
 	template<class tag2, size_t maxBitN2> friend class FpT;
-	Unit v_[maxUnitN];
+	Unit v_[fp::maxUnitN];
 public:
 	// return pointer to array v_[]
 	const Unit *getUnit() const { return v_; }
@@ -65,55 +53,13 @@ public:
 		}
 		printf("\n");
 	}
-	static inline void setModulo(const std::string& mstr, int base = 0)
+	static inline void setModulo(const std::string& mstr, bool useMont = true, int base = 0)
 	{
 		bool isMinus;
 		mpz_class mp;
 		inFromStr(mp, &isMinus, mstr, base);
 		if (isMinus) throw cybozu::Exception("mie:FpT:setModulo:mstr is not minus") << mstr;
-		pBitLen_ = Gmp::getBitLen(mp);
-		if (pBitLen_ > maxBitN) throw cybozu::Exception("mie:FpT:setModulo:too large bitLen") << pBitLen_ << maxBitN;
-		Unit p[maxUnitN] = {};
-		const size_t n = Gmp::getRaw(p, maxUnitN, mp);
-		if (n == 0) throw cybozu::Exception("mie:FpT:setModulo:bad mstr") << mstr;
-#ifdef USE_MONT_FP
-		if (pBitLen_ <= 128) {  op_ = fp::MontFp<tag, 128>::init(p); }
-#if CYBOZU_OS_BIT == 32
-		else if (pBitLen_ <= 160) { static fp::MontFp<tag, 160> f; op_ = f.init(p); }
-#endif
-		else if (pBitLen_ <= 192) { static fp::MontFp<tag, 192> f; op_ = f.init(p); }
-#if CYBOZU_OS_BIT == 32
-		else if (pBitLen_ <= 224) { static fp::MontFp<tag, 224> f; op_ = f.init(p); }
-#endif
-		else if (pBitLen_ <= 256) { static fp::MontFp<tag, 256> f; op_ = f.init(p); }
-		else if (pBitLen_ <= 384) { static fp::MontFp<tag, 384> f; op_ = f.init(p); }
-		else if (pBitLen_ <= 448) { static fp::MontFp<tag, 448> f; op_ = f.init(p); }
-#if CYBOZU_OS_BIT == 32
-		else if (pBitLen_ <= 544) { static fp::MontFp<tag, 544> f; op_ = f.init(p); }
-#else
-		else if (pBitLen_ <= 576) { static fp::MontFp<tag, 576> f; op_ = f.init(p); }
-#endif
-		else { static fp::MontFp<tag, maxBitN> f; op_ = f.init(p); }
-#else
-		if (pBitLen_ <= 128) {  op_ = fp::FixedFp<tag, 128>::init(p); }
-#if CYBOZU_OS_BIT == 32
-		else if (pBitLen_ <= 160) { static fp::FixedFp<tag, 160> f; op_ = f.init(p); }
-#endif
-		else if (pBitLen_ <= 192) { static fp::FixedFp<tag, 192> f; op_ = f.init(p); }
-#if CYBOZU_OS_BIT == 32
-		else if (pBitLen_ <= 224) { static fp::FixedFp<tag, 224> f; op_ = f.init(p); }
-#endif
-		else if (pBitLen_ <= 256) { static fp::FixedFp<tag, 256> f; op_ = f.init(p); }
-		else if (pBitLen_ <= 384) { static fp::FixedFp<tag, 384> f; op_ = f.init(p); }
-		else if (pBitLen_ <= 448) { static fp::FixedFp<tag, 448> f; op_ = f.init(p); }
-#if CYBOZU_OS_BIT == 32
-		else if (pBitLen_ <= 544) { static fp::FixedFp<tag, 544> f; op_ = f.init(p); }
-#else
-		else if (pBitLen_ <= 576) { static fp::FixedFp<tag, 576> f; op_ = f.init(p); }
-#endif
-		else { static fp::FixedFp<tag, maxBitN> f; op_ = f.init(p); }
-#endif
-		assert(op_.N <= maxUnitN);
+		op_.setModulo<tag, maxBitN>(mp, useMont);
 		sq_.set(mp);
 	}
 	static inline void getModulo(std::string& pstr)
@@ -170,13 +116,13 @@ public:
 		}
 		return *this;
 	}
-	void toMont(FpT& y, const FpT& x)
+	void toMont(FpT& y, const FpT& x) const
 	{
-		if (op_.toMont) op_.toMont(y.v_, x.v_);
+		if (op_.useMont) op_.toMont(y.v_, x.v_);
 	}
-	void fromMont(FpT& y, const FpT& x)
+	void fromMont(FpT& y, const FpT& x) const
 	{
-		if (op_.fromMont) op_.fromMont(y.v_, x.v_);
+		if (op_.useMont) op_.fromMont(y.v_, x.v_);
 	}
 	void fromStr(const std::string& str, int base = 0)
 	{
@@ -222,7 +168,7 @@ public:
 	{
 		assert(maxUnitN <= Block::maxUnitN);
 		b.n = op_.N;
-		if (op_.fromMont) {
+		if (op_.useMont) {
 			op_.fromMont(b.v_, v_);
 			b.p = &b.v_[0];
 		} else {
@@ -232,7 +178,7 @@ public:
 	template<class RG>
 	void setRand(RG& rg)
 	{
-		fp::getRandVal(v_, rg, op_.p, pBitLen_);
+		fp::getRandVal(v_, rg, op_.p, op_.bitLen);
 		fromMont(*this, *this);
 	}
 	static inline void toStr(std::string& str, const Unit *x, size_t n, int base = 10, bool withPrefix = false)
@@ -336,7 +282,7 @@ public:
 	{
 		Block b;
 		getBlock(b);
-		bv.append(b.p, pBitLen_);
+		bv.append(b.p, op_.bitLen);
 	}
 	bool isValid() const
 	{
@@ -344,11 +290,11 @@ public:
 	}
 	void fromBitVec(const cybozu::BitVector& bv)
 	{
-		if (bv.size() != pBitLen_) throw cybozu::Exception("FpT:fromBitVec:bad size") << bv.size() << pBitLen_;
+		if (bv.size() != op_.bitLen) throw cybozu::Exception("FpT:fromBitVec:bad size") << bv.size() << op_.bitLen;
 		setRaw(bv.getBlock(), bv.getBlockSize());
 	}
-	static inline size_t getModBitLen() { return pBitLen_; }
-	static inline size_t getBitVecSize() { return pBitLen_; }
+	static inline size_t getModBitLen() { return op_.bitLen; }
+	static inline size_t getBitVecSize() { return op_.bitLen; }
 	bool operator==(const FpT& rhs) const { return fp::local::isEqualArray(v_, rhs.v_, op_.N); }
 	bool operator!=(const FpT& rhs) const { return !operator==(rhs); }
 	inline friend FpT operator+(const FpT& x, const FpT& y) { FpT z; add(z, x, y); return z; }
@@ -407,7 +353,6 @@ private:
 
 template<class tag, size_t maxBitN> fp::Op FpT<tag, maxBitN>::op_;
 template<class tag, size_t maxBitN> mie::SquareRoot FpT<tag, maxBitN>::sq_;
-template<class tag, size_t maxBitN> size_t FpT<tag, maxBitN>::pBitLen_;
 
 namespace power_impl {
 
